@@ -1,0 +1,1 @@
+Just a simple program to try and convert things distributed into AppImages as easy as possible.
