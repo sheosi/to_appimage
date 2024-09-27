@@ -325,7 +325,7 @@ mod temp {
 
     pub fn clean_everything() {
         let tmp_path = get_base();
-        if !tmp_path.exists() {
+        if tmp_path.exists() {
             fs::remove_dir_all(&tmp_path).unwrap();
         }
 
@@ -606,5 +606,5 @@ fn main() {
     }
 
     // TODO: Doesn't work properly
-    //temp::clean_everything();
+    temp::clean_everything();
 }
