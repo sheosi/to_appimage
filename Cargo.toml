@@ -8,6 +8,10 @@ edition = "2021"
 [dependencies]
 dialog = "0.3.0"
 image = "0.24.8"
+itertools = "0.13.0"
+path-utils = "0.1.0"
+regex = "1.10.3"
 serde = {version="1.0.196", features=["derive"]}
+serde_yaml = "0.9.31"
 thiserror = "1.0.56"
 which = "6.0.0"
