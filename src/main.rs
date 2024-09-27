@@ -5,6 +5,10 @@ use std::{
     str::FromStr,
 };
 
+use appstream::{
+    AppStream, AppStreamComponent, ComponentType, Launchable, LaunchableType, Provides,
+};
+use clap::Parser;
 use cmd::RunExt;
 use image::imageops::resize;
 use itertools::Itertools;
@@ -13,12 +17,29 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::to_writer;
 use thiserror::Error;
 
+#[derive(Parser, Debug)]
+struct AppImageArgs {
+    #[arg(short, long, default_value_t = false)]
+    terminal: bool,
+
+    #[arg(short, long)]
+    categories: Vec<String>,
+
+    target: String,
+}
+
+mod appstream;
 mod desktop_entry;
 
 #[derive(Serialize)]
 struct DesktopFile {
     #[serde(rename = "Desktop Entry")]
     file: DesktopEntry,
+}
+
+// Just here for use with skip_serializing_if
+fn is_false(val: &bool) -> bool {
+    *val
 }
 
 #[derive(Serialize)]
@@ -34,6 +55,9 @@ struct DesktopEntry {
     d_type: String,
     #[serde(rename = "Categories")]
     categories: Vec<String>,
+    #[serde(rename = "Terminal")]
+    #[serde(skip_serializing_if = "is_false")]
+    terminal: bool,
 }
 
 #[derive(Serialize)]
@@ -63,7 +87,12 @@ struct Pkg2AppimageDescriptorIngredients {
 }
 
 impl DesktopFile {
-    pub fn new(name: String, icon: Option<String>, categories: Vec<String>) -> Self {
+    pub fn new(
+        name: String,
+        icon: Option<String>,
+        categories: Vec<String>,
+        terminal: bool,
+    ) -> Self {
         Self {
             file: DesktopEntry {
                 name,
@@ -71,6 +100,7 @@ impl DesktopFile {
                 d_type: "Application".to_string(),
                 icon,
                 categories,
+                terminal,
             },
         }
     }
@@ -426,9 +456,11 @@ mod cmd {
 
 fn main() {
     use dialog::DialogBox;
-    let conf = CliConf::default();
 
-    match PkgType::guess(&std::env::args().nth(1).unwrap()) {
+    let conf = CliConf::default();
+    let args = AppImageArgs::parse();
+
+    match PkgType::guess(&args.target) {
         PkgType::Deb(input) => {
             let name_reg = Regex::new("^[A-Za-z-0-9]*").unwrap();
             let name = name_reg
@@ -589,12 +621,40 @@ fn main() {
                     .unwrap()
                     .to_string(),
                 Some(icon),
-                vec!["Game".to_string()],
+                args.categories,
+                args.terminal,
             );
 
             let app_desktop = File::create(actual_input.join("app.desktop")).unwrap();
             desktop_entry::to_writer(app_desktop, &entry).unwrap();
             std::fs::copy(executable, actual_input.join("AppRun")).unwrap();
+
+            // Make appstream
+            // usr/share/metainfo/myapp.appdata.xml
+            let appstream = AppStream {
+                component: AppStreamComponent {
+                    ctype: if args.terminal {
+                        ComponentType::ConsoleApplication
+                    } else {
+                        ComponentType::DesktopApplication
+                    },
+                    id: "TODO!".to_string(),
+                    metadata_license: "TODO!".to_string(),
+                    project_license: "TODO!".to_string(),
+                    name: "TODO!".to_string(),
+                    summary: "TODO!".to_string(),
+                    description: "TODO!".to_string(),
+                    launchable: Launchable {
+                        ctype: LaunchableType::DesktopId,
+                        name: "app.desktop".to_string(),
+                    },
+                    url: None,
+                    screenshots: Vec::new(),
+                    provides: vec![Provides::Id("app.desktop".to_string())],
+                },
+            };
+
+            appstream.write(&actual_input);
 
             let appimagetool_name = "gearlever_appimagetool_d3afa1.appimage";
             cmd::app(appimagetool_name)
