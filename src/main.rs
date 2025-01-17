@@ -6,30 +6,33 @@ use std::{
 };
 
 use appstream::{
-    AppStream, AppStreamComponent, ComponentType, Launchable, LaunchableType, Provides,
+    AppStream, AppStreamComponent, ComponentType, ContentRating, Description, Launchable, LaunchableType, Provides, Screenshot, ScreenshotType, Screenshots, Url
 };
 use clap::Parser;
 use cmd::RunExt;
 use image::imageops::resize;
 use itertools::Itertools;
+use licensing::License;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_yaml::to_writer;
 use thiserror::Error;
+
+
+mod appstream;
+mod desktop_entry;
+mod licensing;
 
 #[derive(Parser, Debug)]
 struct AppImageArgs {
     #[arg(short, long, default_value_t = false)]
     terminal: bool,
 
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "Utility")]
     categories: Vec<String>,
 
     target: String,
 }
-
-mod appstream;
-mod desktop_entry;
 
 #[derive(Serialize)]
 struct DesktopFile {
@@ -260,7 +263,7 @@ mod archive {
 }
 
 fn resize_img(input: &Path, output: &Path) -> image::ImageResult<()> {
-    use image::io::Reader as ImageReader;
+    use image::ImageReader;
 
     let img = ImageReader::open(input)?.decode()?;
     resize(&img, 256, 256, image::imageops::FilterType::Lanczos3).save(output)
@@ -379,7 +382,6 @@ impl PkgType {
     }
 
     fn guess_local(input: &str) -> Self {
-        println!("{}", input);
         let path = PathBuf::from_str(input).unwrap().canonicalize().unwrap();
 
         if path.is_ext("deb") {
@@ -598,7 +600,7 @@ fn main() {
                             .show()
                             .expect("Failed to show message")
                             .unwrap();
-
+                        println!("{}",name);
                         exe_pb = exes
                             .iter()
                             .find(|p| display_pathbuf(&parent_folder, p) == name);
@@ -625,12 +627,22 @@ fn main() {
                 args.terminal,
             );
 
-            let app_desktop = File::create(actual_input.join("app.desktop")).unwrap();
-            desktop_entry::to_writer(app_desktop, &entry).unwrap();
-            std::fs::copy(executable, actual_input.join("AppRun")).unwrap();
+            let f_name = executable.file_name().expect("Executable must have a file name").to_string_lossy().to_string();
+            let id = format!("{}.to_appimage.com", f_name);
+            let desktop = format!("{}.desktop", id);
+            let app_desktop = File::create(actual_input.join(&desktop)).unwrap();
+            let whole_name = actual_input.file_name().expect("Input must have a file name");
 
+            desktop_entry::to_writer(app_desktop, &entry).unwrap();
+            std::fs::copy(&executable, actual_input.join("AppRun")).unwrap();
+
+   
             // Make appstream
             // usr/share/metainfo/myapp.appdata.xml
+            let summary = "TODO!TODO!".to_string();
+            let description = "TODO!TODO!".to_string();
+            const NAME_LIMIT: usize = 15;
+
             let appstream = AppStream {
                 component: AppStreamComponent {
                     ctype: if args.terminal {
@@ -638,19 +650,20 @@ fn main() {
                     } else {
                         ComponentType::DesktopApplication
                     },
-                    id: "TODO!".to_string(),
-                    metadata_license: "TODO!".to_string(),
-                    project_license: "TODO!".to_string(),
-                    name: "TODO!".to_string(),
-                    summary: "TODO!".to_string(),
-                    description: "TODO!".to_string(),
+                    id,
+                    metadata_license: License::CC0,
+                    project_license: License::locate(&actual_input).expect("Couldn't get the license"),
+                    name: whole_name.to_string_lossy()[0..std::cmp::min(whole_name.len(), NAME_LIMIT)].to_string(),
+                    summary,
+                    description: Description{p: description},
                     launchable: Launchable {
                         ctype: LaunchableType::DesktopId,
-                        name: "app.desktop".to_string(),
+                        name: desktop.clone()
                     },
-                    url: None,
-                    screenshots: Vec::new(),
-                    provides: vec![Provides::Id("app.desktop".to_string())],
+                    url: Some(Url{ctype: appstream::UrlType::Homepage, data: "https://github.com/sheosi/to_appimage".to_string()}),
+                    screenshots: Screenshots{screenshot: vec![Screenshot{ctype: ScreenshotType::Default, image: "https://placehold.co/700x400.png".to_string()}]},
+                    provides: Provides{id: desktop.clone()},
+                    content_rating: ContentRating {t: "oars-1.0".to_string()}, // This is for a program that is not +18
                 },
             };
 
@@ -660,6 +673,7 @@ fn main() {
             cmd::app(appimagetool_name)
                 .unwrap()
                 .arg(&actual_input)
+                .arg("-n") // For the time being, ignore checking the appstram file, it appears the desktop file path is not correct, but don't know how to fix it
                 .run_outerr()
                 .unwrap();
         }

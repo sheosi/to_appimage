@@ -2,37 +2,56 @@ use std::{fs, path::Path};
 
 use serde::Serialize;
 
-#[derive(Serialize)]
+use crate::licensing::License;
+
 pub struct AppStream {
     pub component: AppStreamComponent,
 }
 
 #[derive(Serialize)]
+#[serde(rename = "component")]
 pub struct AppStreamComponent {
     #[serde(rename = "@type")]
     pub ctype: ComponentType,
 
     pub id: String,
-    pub metadata_license: String,
-    pub project_license: String,
+    pub metadata_license: License,
+    pub project_license:  License,
     pub name: String,
     pub summary: String,
-    pub description: String,
+    pub description: Description,
     pub launchable: Launchable,
+    pub content_rating: ContentRating,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<Url>,
 
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub screenshots: Vec<Screenshot>,
+    #[serde(skip_serializing_if = "Screenshots::is_empty")]
+    pub screenshots: Screenshots,
 
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub provides: Vec<Provides>,
+    pub provides: Provides,
 }
 
 #[derive(Serialize)]
+pub struct Screenshots {
+    pub screenshot: Vec<Screenshot>
+}
+
+impl Screenshots {
+    pub fn is_empty(&self) -> bool {
+        self.screenshot.is_empty()
+    }
+}
+
+#[derive(Serialize)]
+pub struct Description {
+    pub p: String
+}
+
+
+#[derive(Serialize)]
 pub enum ComponentType {
-    #[serde(rename = "desktop-applicatiom")]
+    #[serde(rename = "desktop-application")]
     DesktopApplication,
 
     #[serde(rename = "console-application")]
@@ -44,6 +63,7 @@ pub struct Launchable {
     #[serde(rename = "@type")]
     pub ctype: LaunchableType,
 
+    #[serde(rename = "$text")]
     pub name: String,
 }
 
@@ -58,6 +78,7 @@ pub struct Url {
     #[serde(rename = "@type")]
     pub ctype: UrlType,
 
+    #[serde(rename = "$text")]
     pub data: String,
 }
 
@@ -68,11 +89,12 @@ pub enum UrlType {
 }
 
 #[derive(Serialize)]
+#[serde(rename="screenshot")]
 pub struct Screenshot {
     #[serde(rename = "@type")]
     pub ctype: ScreenshotType,
 
-    pub image: Image,
+    pub image: String,
 }
 
 #[derive(Serialize)]
@@ -82,14 +104,14 @@ pub enum ScreenshotType {
 }
 
 #[derive(Serialize)]
-pub struct Image {
-    pub data: String,
+pub struct Provides {
+    pub id: String,
 }
 
 #[derive(Serialize)]
-pub enum Provides {
-    #[serde(rename = "id")]
-    Id(String),
+pub struct ContentRating {
+    #[serde(rename="@type")]
+    pub t: String
 }
 
 impl AppStream {
@@ -101,8 +123,16 @@ impl AppStream {
 
         fs::write(
             appstream_path.join(format!("{}.appdata.xml", self.component.id)),
-            quick_xml::se::to_string(self).unwrap().as_bytes(),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string() + &quick_xml::se::to_string(&self.component).unwrap()
         )
         .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a() {
+        assert_eq!("a", "a")
     }
 }
