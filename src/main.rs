@@ -566,7 +566,7 @@ fn main() {
             } else if let Some(linux_exe) = look_for_ext(&actual_input, "x86_64") {
                 linux_exe
             } else {
-                let exes = look_for_no_exts(&actual_input);
+                let mut exes = look_for_no_exts(&actual_input);
                 if exes.is_empty() {
                     panic!("Couldn't find any suitable executable")
                 } else if exes.len() == 1 {
@@ -583,6 +583,13 @@ fn main() {
                             full_path
                         }
                     }
+
+                    fn filename_len(path: &PathBuf) -> usize {
+                        path.file_name().expect("Must have filename").to_string_lossy().len()
+                    }
+
+                    //Sort exes by length, usually the one we want is the one with the shortest name
+                    exes.sort_by(|a,b |filename_len(a).cmp(&filename_len(b)));
 
                     let def_exe_path = exes.first().unwrap().clone();
                     let def_exe = display_pathbuf(&parent_folder, &def_exe_path);
