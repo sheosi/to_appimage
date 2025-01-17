@@ -1,8 +1,5 @@
 use std::{
-    fs::{self, File},
-    path::{Path, PathBuf},
-    process::Command,
-    str::FromStr,
+    fs::{self, File}, io::Write, path::{Path, PathBuf}, process::Command, str::FromStr
 };
 
 use appstream::{
@@ -23,6 +20,8 @@ mod appstream;
 mod desktop_entry;
 mod licensing;
 
+const DEFAULT_ICON: &[u8; 530] = include_bytes!("../default-icon.svg");
+
 #[derive(Parser, Debug)]
 struct AppImageArgs {
     #[arg(short, long, default_value_t = false)]
@@ -30,6 +29,9 @@ struct AppImageArgs {
 
     #[arg(short, long, default_value = "Utility")]
     categories: Vec<String>,
+
+    #[arg(short, long)]
+    icon: Option<String>,
 
     target: String,
 }
@@ -188,7 +190,7 @@ fn look_for_no_exts(path: &PathBuf) -> Vec<PathBuf> {
             .to_lowercase();
         p.is_file()
             && p.extension().is_none()
-            && !["legal_details", "license", "readme"].contains(&file_name_lower.as_str())
+            && !["legal_details", "license", "readme", "apprun", ".diricon"].contains(&file_name_lower.as_str())
     }
     std::fs::read_dir(path)
         .unwrap()
@@ -364,7 +366,7 @@ mod temp {
 
         // Erase /tmp/to_appimage if it's empty
         let common = get_common();
-        if common.read_dir().unwrap().next().is_none() {
+        if common.exists() && common.read_dir().unwrap().next().is_none() {
             std::fs::remove_dir(common).unwrap();
         }
     }
@@ -528,35 +530,35 @@ fn main() {
                 input
             };
 
+            fn valid_icon(path: &Option<String>) -> Option<PathBuf> {
+                if let Some(icon) = path {
+                    let path = Path::new(icon).to_path_buf();
+                    if path.exists() {
+                        Some(path)
+                    }
+                    else { None}
+                }
+                else { None}
+            }
+
             // Due to how the pkg2appimagetool works we NEED an icon, that's why it isn't an
             // option
-            let icon = if actual_input.join("AppIcon.png").exists() {
+            let icon = 
+            if let Some(icon) = valid_icon(&args.icon) {
+                fs::copy(icon, actual_input.join("AppIcon.png")).expect("Couldn't write AppIcon");
+                "AppIcon".to_string()
+            }
+            else if actual_input.join("AppIcon.png").exists() || actual_input.join("AppIcon.svg").exists() {
                 "AppIcon".to_string()
             } else if let Some(exe_name) = look_for_ext(&actual_input, "exe") {
                 extract_icon_from_exe(&conf, &actual_input, exe_name.to_str().unwrap());
                 "AppIcon".to_string()
             } else {
-                dialog::Message::new(
-                    "No suitable icon could be found, appoint to a path where one can be found",
-                )
-                .show()
-                .expect("Couldn't show message");
-                let icon_path = dialog::FileSelection::new("Select icon")
-                    .title("Select icon")
-                    .show()
-                    .expect("Couldn't show dialog");
-
-                let icon_path = PathBuf::from(icon_path.unwrap());
-                if icon_path.exists() && icon_path.is_file() {
-                    resize_img(&icon_path, &actual_input.join("AppIcon.png")).unwrap();
-                    "AppIcon".to_string()
-                } else {
-                    dialog::Message::new("No icon was selected, one will be downloaded")
+                    dialog::Message::new("No icon found, writing one")
                         .show()
                         .expect("Couldn't show message");
-                    download_file("https://icons.iconarchive.com/icons/kxmylo/simple/256/application-default-icon.png", actual_input.join("AppIcon.png").to_str().unwrap());
+                    File::create(actual_input.join("AppIcon.svg")).expect("This should be possible").write(DEFAULT_ICON).expect("Failed to write icon");
                     "AppIcon".to_string()
-                }
             };
 
             let executable = if let Some(shell_file) = look_for_ext(&actual_input, "sh") {
