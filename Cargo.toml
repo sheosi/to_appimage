@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.18", features = ["derive"] }
 dialog = "0.3.0"
+directories = "6.0.0"
 image = "0.25"
 itertools = "0.14.0"
 path-utils = "0.1.0"

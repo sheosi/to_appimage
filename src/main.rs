@@ -1,12 +1,12 @@
 use std::{
-    fs::{self, File}, io::Write, path::{Path, PathBuf}, process::Command, str::FromStr
+    fs::{self, File}, io::Write, os::unix::fs::PermissionsExt, path::{Path, PathBuf}, process::Command, str::FromStr
 };
 
 use appstream::{
     AppStream, AppStreamComponent, ComponentType, ContentRating, Description, Launchable, LaunchableType, Provides, Screenshot, ScreenshotType, Screenshots, Url
 };
 use clap::Parser;
-use cmd::RunExt;
+use cmd::{download_to, LinkSet, RunExt};
 use image::imageops::resize;
 use itertools::Itertools;
 use licensing::License;
@@ -21,6 +21,11 @@ mod desktop_entry;
 mod licensing;
 
 const DEFAULT_ICON: &[u8; 530] = include_bytes!("../default-icon.svg");
+
+const APPIMAGETOOL_LINKSET: LinkSet = LinkSet {
+    x86_64: "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage",
+    arch64: "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-aarch64.AppImage",
+};
 
 #[derive(Parser, Debug)]
 struct AppImageArgs {
@@ -294,27 +299,9 @@ impl ExtUtils for PathBuf {
     }
 }
 
-fn download_file(url: &str, file_name: &str) {
-    if let Some(mut curl) = cmd::app("curl") {
-        curl.args(["-L", url, "-o", file_name]).run().unwrap();
-    } else if let Some(mut wget) = cmd::app("wget") {
-        wget.args([url, "-O", file_name]).run().unwrap();
-    } else {
-        panic!("There's no available program for downloading files!")
-    }
-}
 
 fn download_to_temp(tmp_path: &Path, url: &str) -> String {
-    let tmp_path_str = tmp_path.to_str().unwrap();
-    if let Some(mut curl) = cmd::app("curl") {
-        curl.args(["-O", "-L", "--output-dir", tmp_path_str, url])
-            .run()
-            .unwrap();
-    } else if let Some(mut wget) = cmd::app("wget") {
-        wget.args([url, "-P", tmp_path_str]).run().unwrap();
-    } else {
-        panic!("There's no available program for downloading files!")
-    }
+    (&mut download_to(url, tmp_path)).run().unwrap();
 
     tmp_path
         .read_dir()
@@ -407,18 +394,25 @@ fn run_pkgtoappimage(yml: &Path) {
     }
 }
 
-mod cmd {
-    use std::process::Command;
+fn mark_executable(path: &Path) {
+    let mut perms = std::fs::metadata(path).expect("Failed to obtain metadata").permissions();
+    let mode = perms.mode();
+    let user_perms = ((mode/64) | 1) * 64;
+    let group_perms = (((mode % 64)/8) | 1) * 8;
+    let others_perms = (mode % 8) | 1 ;
+    perms.set_mode(user_perms + group_perms + others_perms);
+    fs::set_permissions(path, perms).expect("Failed to set metatadata");
+}
 
-    use crate::{CliKind, Error};
+mod cmd {
+    use std::{path::Path, process::Command};
+
+    use crate::{mark_executable, CliKind, Error};
 
     pub fn app(name: &str) -> Option<Command> {
-        if let Ok(app_path) = which::which(name) {
-            Some(Command::new(app_path))
-        } else {
-            None
-        }
+        which::which(name).ok().map(Command::new)
     }
+
     pub fn app_from(name: &str, kind: CliKind, container: Option<&str>) -> Option<Command> {
         if matches!(kind, CliKind::Native) {
             app(name)
@@ -431,6 +425,67 @@ mod cmd {
         let mut c = Command::new("/usr/bin/toolbox");
         c.arg("run").arg("-c").arg(container).arg(command);
         c
+    }
+    
+    pub fn download_as(url: &str, file_name: &Path) {
+        let out_path_str = file_name.to_str().expect("Out must be UTF-8");
+        if let Some(mut curl) = app("curl") {
+            curl.args(["-L", url, "-o", out_path_str]).run().unwrap();
+        } else if let Some(mut wget) = app("wget") {
+            wget.args([url, "-O", out_path_str]).run().unwrap();
+        } else {
+            panic!("There's no available program for downloading files!")
+        }
+    }
+    
+
+    pub fn download_to(url: &str, dir_path: &Path) -> Command {
+        let dir_path_str = dir_path.to_str().expect("Path must be UTF-8 valid");
+        if let Some(mut curl) = app("curl") {
+            curl.args(["-O", "-L", "--output-dir", dir_path_str, url]);
+            curl
+        } else if let Some(mut wget) = app("wget") {
+            wget.args([url, "-P", dir_path_str]);
+            wget
+        } else {
+            panic!("There's no available program for downloading files!")
+        }
+    }
+
+ 
+    
+    const CACHE_DIR: &str = ".local/Apps";
+
+    pub struct  LinkSet {
+        pub x86_64: &'static str,
+        pub arch64: &'static str
+    }
+
+    impl LinkSet {
+        pub fn get_current(&self) -> &str {
+            match std::env::consts::ARCH {
+                "aarch64"=> &self.arch64,
+                "x86_64" => &self.x86_64,
+                _ => panic!("Architecture not supported!")
+            }
+        }
+    }
+
+    pub fn cached_app(name: &str, link_set: &LinkSet) -> Command {
+        app(name).unwrap_or_else(||{
+            let cache_dir = directories::UserDirs::new().expect("Can't locate user's directories").home_dir().join(CACHE_DIR);
+            if !cache_dir.exists() {
+                std::fs::create_dir_all(&cache_dir).expect("Couldn't create cached dir");
+            }
+
+            let cached_app = cache_dir.join(name);
+            app(cached_app.to_str().expect("path must be UTF-8 valid")).unwrap_or_else(||{
+                download_as(link_set.get_current(), &cached_app);
+                mark_executable(&cached_app);
+                Command::new(cached_app)
+            })
+        })
+        
     }
 
     pub trait RunExt {
@@ -678,9 +733,8 @@ fn main() {
 
             appstream.write(&actual_input);
 
-            let appimagetool_name = "gearlever_appimagetool_d3afa1.appimage";
-            cmd::app(appimagetool_name)
-                .unwrap()
+            cmd::cached_app("appimagetool.appimage", &APPIMAGETOOL_LINKSET)
+                
                 .arg(&actual_input)
                 .arg("-n") // For the time being, ignore checking the appstram file, it appears the desktop file path is not correct, but don't know how to fix it
                 .run_outerr()
